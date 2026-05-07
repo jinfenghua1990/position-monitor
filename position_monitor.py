@@ -156,17 +156,23 @@ def check_positions(test_mode: bool = False):
     alerts = []
     
     for pos in positions:
-        code = pos.get('stockCode', '')
-        name = pos.get('stockName', '')
-        quantity = pos.get('quantity', 0)
-        cost_price = pos.get('costPrice', 0)
-        current_price = pos.get('currentPrice', cost_price)  # 持仓数据可能含当前价
+        # 妙想API字段名映射
+        code = pos.get('secCode', pos.get('stockCode', ''))
+        name = pos.get('secName', pos.get('stockName', ''))
+        quantity = pos.get('count', pos.get('quantity', 0))
+        cost_price_raw = pos.get('costPrice', 0)
+        cost_price_dec = pos.get('costPriceDec', 2)
+        current_price_raw = pos.get('price', cost_price_raw)
+        current_price_dec = pos.get('priceDec', 2)
+        profit_pct = pos.get('profitPct', 0)  # 直接使用API返回的盈亏比例
         
-        # 计算盈亏比例
-        if cost_price > 0:
+        # 价格需要除以10^priceDec（妙想API返回的是整数倍的价格）
+        cost_price = cost_price_raw / (10 ** cost_price_dec) if cost_price_raw else 0
+        current_price = current_price_raw / (10 ** current_price_dec) if current_price_raw else cost_price
+        
+        # 如果profitPct不存在，手动计算
+        if profit_pct == 0 and cost_price > 0:
             profit_pct = ((current_price - cost_price) / cost_price) * 100
-        else:
-            profit_pct = 0
         
         # 获取个性化止盈止损阈值
         cfg = stop_config.get(code, {})
