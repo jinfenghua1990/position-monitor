@@ -1,0 +1,12 @@
+[
+  {
+    "symbol": "300001",
+    "name": "示例科技",
+    "buy_price": 9.8,
+    "sell_price": 12.5,
+    "profit_pct": 27.5,
+    "sell_reason": "止盈",
+    "sell_date": "2026-05-01",
+    "status": "watch_second_wave"
+  }
+]
