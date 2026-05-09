@@ -1,0 +1,11 @@
+[
+  {
+    "symbol": "300001",
+    "name": "示例科技",
+    "previous_profit_pct": 27.5,
+    "current_pullback_pct": 8,
+    "status": "watching",
+    "signal": "站上5日线",
+    "note": "观察二波放量机会"
+  }
+]
