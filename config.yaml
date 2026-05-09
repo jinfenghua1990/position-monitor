@@ -1,0 +1,62 @@
+# 持仓监控系统配置
+# 先用手工回传数据驱动，后续可替换为券商/API 自动同步。
+
+account:
+  base_currency: CNY
+
+reminder:
+  market: A股
+  timezone: Asia/Shanghai
+  upload_checkpoints:
+    - name: 盘前
+      time: "08:45"
+      required_files:
+        - 资金数据
+        - 昨日最终持仓
+        - 历史成交
+        - 委托记录
+    - name: 上午盘中
+      time: "10:30"
+      required_files:
+        - 最新持仓
+        - 当日成交
+        - 当日委托
+    - name: 下午盘中
+      time: "13:30"
+      required_files:
+        - 最新持仓
+        - 当日成交
+        - 当日委托
+        - 二波观察池变化
+    - name: 盘后
+      time: "15:10"
+      required_files:
+        - 今日最终持仓
+        - 今日成交
+        - 今日委托
+        - 资金数据
+
+risk_rules:
+  take_profit_pct: 15
+  stop_loss_pct: -5
+  intraday_change_pct: 3
+  max_single_position_pct: 30
+  max_total_position_pct: 80
+
+second_wave:
+  enabled: true
+  # 曾经盈利卖出的股票，默认进入二波观察池。
+  min_previous_profit_pct: 3
+  # 卖出后回调区间：太浅没性价比，太深可能趋势破坏。
+  pullback_min_pct: 5
+  pullback_max_pct: 15
+  # 重新启动信号。
+  breakout_volume_ratio: 1.5
+  reclaim_ma_days:
+    - 5
+    - 10
+  remove_if_break_support_pct: -3
+
+report:
+  output_dir: reports
+  show_empty_sections: true
