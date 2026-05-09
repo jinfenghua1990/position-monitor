@@ -6,14 +6,16 @@
 - 仓位与止损
 - 后续 1/3/5 日结果
 - 最大收益与最大回撤
+- 退出原因与失败原因
 
 后续系统可以基于这些记录统计：不同评分区间的胜率、平均收益、平均回撤，
-帮助判断“83 分是否真的值得做”。
+以及最常见的亏损模式，帮助判断“83 分是否真的值得做”。
 """
 
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -36,13 +38,23 @@ class TradeJournalEntry:
     position_pct: Optional[float] = None
     stop_loss_pct: Optional[float] = None
     expected: str = ""
+
+    # 交易结果回写字段
     result_1d_pct: Optional[float] = None
     result_3d_pct: Optional[float] = None
     result_5d_pct: Optional[float] = None
     max_profit_pct: Optional[float] = None
     max_drawdown_pct: Optional[float] = None
+    exit_date: Optional[str] = None
+    exit_reason: str = ""  # stop_loss / take_profit / manual / timeout / break_structure
+    followed_plan: Optional[bool] = None
+
+    # 失败数据库字段
+    failure_tags: List[str] = field(default_factory=list)
+    failure_note: str = ""
     review: str = ""
     created_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    updated_at: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -86,9 +98,18 @@ class TradingJournal:
         result_5d_pct: Optional[float] = None,
         max_profit_pct: Optional[float] = None,
         max_drawdown_pct: Optional[float] = None,
+        exit_date: Optional[str] = None,
+        exit_reason: Optional[str] = None,
+        followed_plan: Optional[bool] = None,
+        failure_tags: Optional[List[str]] = None,
+        failure_note: Optional[str] = None,
         review: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """回写某笔交易结果。"""
+        """回写某笔交易结果。
+
+        symbol + trade_date 用来定位一笔交易。
+        如果找不到，返回 None，调用方可以提示用户先补交易记录。
+        """
         entries = self.load()
         target = None
         for item in reversed(entries):
@@ -105,11 +126,17 @@ class TradingJournal:
             "result_5d_pct": result_5d_pct,
             "max_profit_pct": max_profit_pct,
             "max_drawdown_pct": max_drawdown_pct,
+            "exit_date": exit_date,
+            "exit_reason": exit_reason,
+            "followed_plan": followed_plan,
+            "failure_tags": failure_tags,
+            "failure_note": failure_note,
             "review": review,
         }
         for key, value in updates.items():
             if value is not None:
                 target[key] = value
+        target["updated_at"] = datetime.now().isoformat(timespec="seconds")
 
         self.save(entries)
         return target
@@ -154,6 +181,60 @@ class TradingJournal:
             )
         return summary
 
+    def summarize_failures(self) -> Dict[str, Any]:
+        """统计失败数据库。
+
+        亏损判断优先看 result_5d_pct，其次看 max_drawdown_pct。
+        failure_tags 用来沉淀亏损模式，例如：追高、缩量、板块退潮、假突破。
+        """
+        entries = self.load()
+        loss_entries = [item for item in entries if _is_loss_trade(item)]
+
+        tag_counter: Counter[str] = Counter()
+        exit_reason_counter: Counter[str] = Counter()
+        plan_break_count = 0
+
+        for item in loss_entries:
+            tag_counter.update(item.get("failure_tags") or [])
+            if item.get("exit_reason"):
+                exit_reason_counter.update([item["exit_reason"]])
+            if item.get("followed_plan") is False:
+                plan_break_count += 1
+
+        return {
+            "loss_count": len(loss_entries),
+            "top_failure_tags": tag_counter.most_common(10),
+            "exit_reasons": exit_reason_counter.most_common(10),
+            "plan_break_count": plan_break_count,
+            "plan_break_rate_pct": round(plan_break_count / len(loss_entries) * 100, 2) if loss_entries else None,
+        }
+
+    def generate_learning_notes(self) -> List[str]:
+        """基于现有日志生成简单学习提示。"""
+        notes: List[str] = []
+        failure_summary = self.summarize_failures()
+        score_summary = self.summarize_by_score_bucket()
+
+        top_tags = failure_summary.get("top_failure_tags") or []
+        if top_tags:
+            tag, count = top_tags[0]
+            notes.append(f"最近亏损最常见原因是：{tag}（{count} 次），下次出现该标签时建议降低仓位。")
+
+        plan_break_rate = failure_summary.get("plan_break_rate_pct")
+        if plan_break_rate is not None and plan_break_rate >= 30:
+            notes.append(f"亏损交易中有 {plan_break_rate}% 未按计划执行，优先优化纪律，而不是优化选股。")
+
+        for row in score_summary:
+            if row["completed_count"] >= 5 and row["avg_5d_pct"] is not None:
+                if row["avg_5d_pct"] < 0:
+                    notes.append(f"评分区间 {row['bucket']} 的 5 日平均收益为 {row['avg_5d_pct']}%，暂时不宜盲目加仓。")
+                elif row["win_rate_pct"] is not None and row["win_rate_pct"] >= 60:
+                    notes.append(f"评分区间 {row['bucket']} 当前胜率 {row['win_rate_pct']}%，可以继续观察是否稳定。")
+
+        if not notes:
+            notes.append("交易样本还不够，先持续记录 30-50 笔，再判断评分系统是否有效。")
+        return notes
+
 
 def create_today_entry(
     symbol: str,
@@ -185,3 +266,15 @@ def _average(values: Iterable[Optional[float]]) -> Optional[float]:
     if not nums:
         return None
     return round(sum(nums) / len(nums), 2)
+
+
+def _is_loss_trade(item: Dict[str, Any]) -> bool:
+    result_5d = item.get("result_5d_pct")
+    if result_5d is not None:
+        return float(result_5d) < 0
+
+    max_drawdown = item.get("max_drawdown_pct")
+    if max_drawdown is not None:
+        return float(max_drawdown) < 0
+
+    return False
